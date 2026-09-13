@@ -14,6 +14,7 @@ add_executable(FolderViz WIN32
     src/app.cpp
     src/scanner.cpp
     src/treemap.cpp
+    src/city.cpp
     src/filetype.cpp
     app.manifest
 )
@@ -30,6 +31,7 @@ target_compile_options(FolderViz PRIVATE /W4 /permissive- /utf-8)
 target_link_libraries(FolderViz PRIVATE
     comctl32
     gdi32
+    gdiplus
     user32
     shell32
     ole32

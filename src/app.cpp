@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "city.h"
 #include "filetype.h"
 #include "format.h"
 #include "scanner.h"
@@ -28,10 +29,13 @@ constexpr int kIdTree = 2001;
 constexpr int kIdList = 2002;
 constexpr int kIdTreemap = 2003;
 constexpr int kIdStatus = 2004;
+constexpr int kIdCity = 2005;
 
 constexpr int kCmdScan = 1001;
 constexpr int kCmdRefresh = 1002;
 constexpr int kCmdExit = 1003;
+constexpr int kCmdViewTreemap = 1004;
+constexpr int kCmdViewCity = 1005;
 
 struct App {
     HINSTANCE instance = nullptr;
@@ -39,6 +43,7 @@ struct App {
     HWND tree = nullptr;
     HWND list = nullptr;
     HWND treemap = nullptr;
+    HWND city = nullptr;
     HWND status = nullptr;
     HFONT font = nullptr;
 
@@ -57,8 +62,10 @@ struct App {
     std::vector<TmRect> hits;
     int legendHeight = 0;
     bool scanning = false;
+    bool cityView = false;
     int dpi = 96;
     bool trackingMouse = false;
+    HACCEL accel = nullptr;
 };
 
 App g_app;
@@ -107,6 +114,15 @@ std::wstring PercentText(const Node* node, uint64_t base) {
     wchar_t buf[32];
     swprintf_s(buf, L"%.1f%%", pct);
     return buf;
+}
+
+std::wstring DescribeNode(const Node* node) {
+    std::wstring text = node->name + L"  -  " + FormatSize(node->size);
+    if (node->isDir) {
+        text += L"  -  " + std::to_wstring(node->fileCount) + L" files, " +
+                std::to_wstring(node->dirCount) + L" folders";
+    }
+    return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -433,9 +449,9 @@ void UpdateStatus(App* a) {
     if (a->scanning) {
         left = L"Scanning " + a->scanner.RootPath() + L"...";
     } else if (a->hover) {
-        left = a->hover->name + L"  -  " + FormatSize(a->hover->size);
+        left = DescribeNode(a->hover);
     } else if (a->selected) {
-        left = a->selected->name + L"  -  " + FormatSize(a->selected->size);
+        left = DescribeNode(a->selected);
     } else if (a->current) {
         left = a->current->path;
     } else {
@@ -458,6 +474,35 @@ void UpdateStatus(App* a) {
     SendMessageW(a->status, SB_SETTEXTW, 2, reinterpret_cast<LPARAM>(right.c_str()));
 }
 
+void SyncCity(App* a) {
+    if (!a->city || !a->cityView) {
+        return;
+    }
+    CitySetDirectory(a->city, a->current);
+    CitySetSelected(a->city, a->selected);
+}
+
+void ShowView(App* a, bool city) {
+    a->cityView = city;
+    ShowWindow(a->treemap, city ? SW_HIDE : SW_SHOW);
+    ShowWindow(a->city, city ? SW_SHOW : SW_HIDE);
+    HMENU menu = GetMenu(a->main);
+    if (menu) {
+        CheckMenuItem(menu, kCmdViewTreemap,
+                      MF_BYCOMMAND | (city ? MF_UNCHECKED : MF_CHECKED));
+        CheckMenuItem(menu, kCmdViewCity,
+                      MF_BYCOMMAND | (city ? MF_CHECKED : MF_UNCHECKED));
+    }
+    if (city) {
+        CitySetDirectory(a->city, a->current);
+        CitySetSelected(a->city, a->selected);
+        InvalidateRect(a->city, nullptr, TRUE);
+    } else {
+        BuildTreemap(a);
+        InvalidateRect(a->treemap, nullptr, TRUE);
+    }
+}
+
 void Layout(App* a) {
     RECT client{};
     GetClientRect(a->main, &client);
@@ -469,12 +514,13 @@ void Layout(App* a) {
 
     const int width = client.right - client.left;
     const int contentHeight = (client.bottom - client.top) - statusHeight;
-    const int topHeight = contentHeight * 45 / 100;
-    const int treeWidth = width * 35 / 100;
+    const int leftWidth = width * 52 / 100;
+    const int treeHeight = contentHeight * 48 / 100;
 
-    MoveWindow(a->tree, 0, 0, treeWidth, topHeight, TRUE);
-    MoveWindow(a->list, treeWidth, 0, width - treeWidth, topHeight, TRUE);
-    MoveWindow(a->treemap, 0, topHeight, width, contentHeight - topHeight, TRUE);
+    MoveWindow(a->tree, 0, 0, leftWidth, treeHeight, TRUE);
+    MoveWindow(a->list, 0, treeHeight, leftWidth, contentHeight - treeHeight, TRUE);
+    MoveWindow(a->treemap, leftWidth, 0, width - leftWidth, contentHeight, TRUE);
+    MoveWindow(a->city, leftWidth, 0, width - leftWidth, contentHeight, TRUE);
 
     int parts[3];
     parts[0] = width - Scale(a, 320);
@@ -504,6 +550,9 @@ void StartScan(App* a, const std::wstring& path) {
     TreeView_DeleteAllItems(a->tree);
     ListView_SetItemCountEx(a->list, 0, 0);
     InvalidateRect(a->treemap, nullptr, TRUE);
+    if (a->city) {
+        CitySetDirectory(a->city, nullptr);
+    }
 
     UpdateStatus(a);
     a->scanner.Start(path, a->main);
@@ -533,6 +582,7 @@ void OnScanDone(App* a) {
     RefreshList(a);
     BuildTreemap(a);
     UpdateStatus(a);
+    SyncCity(a);
     InvalidateRect(a->treemap, nullptr, TRUE);
 }
 
@@ -605,6 +655,7 @@ void OnTreeNotify(App* a, NMTREEVIEWW* info) {
             RefreshList(a);
             BuildTreemap(a);
             UpdateStatus(a);
+            SyncCity(a);
             InvalidateRect(a->treemap, nullptr, TRUE);
             break;
         }
@@ -648,6 +699,7 @@ void OnListNotify(App* a, NMHDR* header) {
                     a->selected = a->listItems[index];
                     BuildTreemap(a);
                     UpdateStatus(a);
+                    SyncCity(a);
                     InvalidateRect(a->treemap, nullptr, TRUE);
                 }
             }
@@ -798,6 +850,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                                          0, 0, 0, 0, hwnd,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTreemap)),
                                          a->instance, a);
+            a->city = CreateCityWindow(hwnd, a->instance, kIdCity);
             a->status = CreateWindowExW(0, STATUSCLASSNAMEW, L"",
                                         WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP, 0, 0, 0, 0,
                                         hwnd,
@@ -843,6 +896,13 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             }
 
             a->legendHeight = Scale(a, 30);
+
+            ACCEL accels[2] = {
+                {FVIRTKEY, VK_F5, static_cast<WORD>(kCmdRefresh)},
+                {static_cast<BYTE>(FVIRTKEY | FCONTROL), 'O',
+                 static_cast<WORD>(kCmdScan)},
+            };
+            a->accel = CreateAcceleratorTableW(accels, 2);
             break;
         }
         case WM_SIZE:
@@ -871,6 +931,12 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                 case kCmdExit:
                     DestroyWindow(hwnd);
                     break;
+                case kCmdViewTreemap:
+                    ShowView(a, false);
+                    break;
+                case kCmdViewCity:
+                    ShowView(a, true);
+                    break;
                 default:
                     break;
             }
@@ -891,8 +957,23 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         case WM_APP_SCAN_DONE:
             OnScanDone(a);
             return 0;
+        case WM_APP_CITY_SELECT:
+            a->selected = reinterpret_cast<Node*>(lParam);
+            UpdateStatus(a);
+            return 0;
+        case WM_APP_CITY_ACTIVATE: {
+            Node* node = reinterpret_cast<Node*>(lParam);
+            if (node && node->isDir) {
+                EnsureTreePath(a, node);
+            }
+            return 0;
+        }
         case WM_DESTROY:
             a->scanner.Cancel();
+            if (a->accel) {
+                DestroyAcceleratorTable(a->accel);
+                a->accel = nullptr;
+            }
             if (a->font) {
                 DeleteObject(a->font);
                 a->font = nullptr;
@@ -913,12 +994,19 @@ HMENU CreateAppMenu() {
     AppendMenuW(file, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(file, MF_STRING, kCmdExit, L"E&xit");
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"&File");
+
+    HMENU view = CreatePopupMenu();
+    AppendMenuW(view, MF_STRING, kCmdViewTreemap, L"&Treemap");
+    AppendMenuW(view, MF_STRING, kCmdViewCity, L"3D &City");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"&View");
+    CheckMenuItem(menu, kCmdViewCity, MF_BYCOMMAND | MF_CHECKED);
+
     return menu;
 }
 
 }  // namespace
 
-int RunApp(HINSTANCE instance, const std::wstring& initialPath) {
+int RunApp(HINSTANCE instance, const std::wstring& initialPath, bool startInCityView) {
     g->instance = instance;
 
     WNDCLASSEXW mainClass{};
@@ -942,6 +1030,8 @@ int RunApp(HINSTANCE instance, const std::wstring& initialPath) {
     treemapClass.lpszClassName = kTreemapClass;
     RegisterClassExW(&treemapClass);
 
+    RegisterCityClass(instance);
+
     HWND hwnd = CreateWindowExW(0, kMainClass,
                                 L"FolderViz - Folder Size Visualizer",
                                 WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1120,
@@ -954,12 +1044,16 @@ int RunApp(HINSTANCE instance, const std::wstring& initialPath) {
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 
+    ShowView(g, startInCityView);
     if (!initialPath.empty()) {
         StartScan(g, initialPath);
     }
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        if (g->accel && TranslateAcceleratorW(hwnd, g->accel, &message)) {
+            continue;
+        }
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
