@@ -3,6 +3,8 @@
 A small WinDirStat-style folder size visualizer for Windows, written in C++20 with the
 Win32 API and GDI. No third-party dependencies.
 
+![FolderViz showing a scanned Steam library with the "steammaps" folder selected](example.png)
+
 ## Features
 
 - **Parallel recursive scan** on a background thread using `FindFirstFileEx` with large
@@ -43,16 +45,34 @@ cmake --build build
 
 ## Usage
 
-- Launch `FolderViz.exe` and choose **File > Scan Folder...**, or
-- `FolderViz.exe "C:\path\to\folder"` to scan immediately (starts in the 3D city view), or
-- `FolderViz.exe --treemap "C:\path\to\folder"` to start in the treemap instead
-  (`--city` forces the city view, the default).
+Launch with `FolderViz.exe` and choose **File > Scan Folder...** (Ctrl+O), or start straight
+from the command line:
+
+- `FolderViz.exe "C:\path\to\folder"` — scan immediately (opens in the 3D city view).
+- `FolderViz.exe --treemap "C:\path\to\folder"` — start in the treemap instead.
+- `--city` forces the city view (it is the default).
+
+A quick tour:
+
+1. **Scan** a folder. The directory tree fills in on the top-left, the file list below it,
+   and the visualization on the right.
+2. **Inspect an item** by clicking its building. It glows and shows a label with its name,
+   size, and how many files/folders it contains (the same info appears in the status bar).
+   A single click only selects; it does not leave the current folder.
+3. **Travel into a folder** by double-clicking its building. The tree selection, file list,
+   and city all switch to show that folder's contents. Folder rows in the file list work the
+   same way.
+4. **Go back up** — click any parent folder in the **top-left tree**. Selecting a folder
+   there opens it, so the tree doubles as the navigation history/back button.
+5. **Orbit the city**: drag to rotate, mouse wheel to zoom, right-click to reset the camera.
+6. **Switch views** with **View > Treemap** for a flat squarified map colored by file
+   extension, with a legend.
 
 Controls:
 
 | Action | Effect |
 | --- | --- |
-| Click tree node | Show that directory in the list and visualization |
+| Click tree node | Open that directory in the list and visualization |
 | View menu | Switch between **Treemap** and **3D City** |
 | Click a treemap rect | Highlight the item (status bar shows name/size) |
 | Double-click a treemap rect / list row | Drill into a directory |
@@ -67,8 +87,8 @@ Controls:
 | Drag | Orbit the camera |
 | Mouse wheel | Zoom in/out |
 | Right-click | Reset the camera |
-| Click a building | Select it; it glows and shows name, size, file/folder counts |
-| Double-click a building | Drill into that folder |
+| Click a building | Select/inspect it; it glows and shows name, size, file/folder counts |
+| Double-click a folder building | Travel into that folder (same as the list/tree) |
 
 ## Project layout
 
